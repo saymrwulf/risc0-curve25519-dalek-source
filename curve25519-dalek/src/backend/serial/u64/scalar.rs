@@ -106,7 +106,10 @@ impl Scalar52 {
         hi[1] = ((words[4] >> 56) | (words[ 5] <<  8)) & mask;
         hi[2] = ((words[5] >> 44) | (words[ 6] << 20)) & mask;
         hi[3] = ((words[6] >> 32) | (words[ 7] << 32)) & mask;
-        hi[4] =   words[7] >> 20                             ;
+        // AENEAS-COMPAT: a bare `x >> c` as the full RHS extracts ill-typed
+        // at the pinned Aeneas (wrapping_shr with an unsubstituted i32 cast);
+        // masking is a semantic no-op here (words[7] >> 20 < 2^44 < 2^52).
+        hi[4] =  (words[7] >> 20)                      & mask;
 
         lo = Scalar52::montgomery_mul(&lo, &constants::R);  // (lo * R) / R = lo
         hi = Scalar52::montgomery_mul(&hi, &constants::RR); // (hi * R^2) / R = hi * R
