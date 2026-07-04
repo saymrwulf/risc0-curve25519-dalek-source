@@ -701,15 +701,15 @@ impl<'d> Deserialize<'d> for VerifyingKey {
 // Semantics identical; pure refactor for extraction only.
 // ─────────────────────────────────────────────────────────────────────────────
 
-pub(crate) fn sha512_new() -> Sha512 {
-    Digest::new()
-}
-
-pub(crate) fn sha512_update(h: &mut Sha512, m: &[u8]) {
-    Digest::update(h, m)
-}
-
-pub(crate) fn sha512_finalize_bytes(h: Sha512) -> [u8; 64] {
+/// AENEAS-COMPAT: the whole three-part hash as ONE monomorphic call whose
+/// signature carries no foreign types (this fork's sha2-0.10 `Sha512` type
+/// alias cannot be declared opaque by the extractor). Semantically:
+/// `Sha512::new().chain(r).chain(a).chain(m).finalize()`.
+pub(crate) fn sha512_hash3(r: &[u8], a: &[u8], m: &[u8]) -> [u8; 64] {
+    let mut h: Sha512 = Digest::new();
+    Digest::update(&mut h, r);
+    Digest::update(&mut h, a);
+    Digest::update(&mut h, m);
     Digest::finalize(h).into()
 }
 
@@ -719,11 +719,11 @@ pub(crate) fn recompute_r_sha512(
     sig: &InternalSignature,
     message: &[u8],
 ) -> CompressedEdwardsY {
-    let mut h = sha512_new();
-    sha512_update(&mut h, sig.R.as_bytes());
-    sha512_update(&mut h, key.compressed.as_bytes());
-    sha512_update(&mut h, message);
-    let k = Scalar::from_bytes_mod_order_wide(&sha512_finalize_bytes(h));
+    let k = Scalar::from_bytes_mod_order_wide(&sha512_hash3(
+        sig.R.as_bytes(),
+        key.compressed.as_bytes(),
+        message,
+    ));
 
     let minus_A: EdwardsPoint = -key.point;
     EdwardsPoint::vartime_double_scalar_mul_basepoint(&k, &minus_A, &sig.s).compress()
