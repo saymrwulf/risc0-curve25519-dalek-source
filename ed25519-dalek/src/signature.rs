@@ -94,12 +94,41 @@ fn check_scalar(bytes: [u8; 32]) -> Result<Scalar, SignatureError> {
 }
 
 /// Ensures that the scalar `s` of a signature is within the bounds [0, ℓ)
+///
+/// AENEAS-COMPAT (formal verification): explicit little-endian comparison
+/// against ℓ followed by `from_bytes_mod_order` (the identity on canonical
+/// bytes) — value-level semantics identical to
+/// `Scalar::from_canonical_bytes(bytes).into()`; the subtle machinery's
+/// `black_box` internals defeat the extractor, and the verification path is
+/// variable-time throughout.
 #[cfg(not(feature = "legacy_compatibility"))]
 #[inline(always)]
 fn check_scalar(bytes: [u8; 32]) -> Result<Scalar, SignatureError> {
-    match Scalar::from_canonical_bytes(bytes).into() {
-        None => Err(InternalError::ScalarFormat.into()),
-        Some(x) => Ok(x),
+    /// ℓ = 2^252 + 27742317777372353535851937790883648493, little-endian.
+    const L_BYTES: [u8; 32] = [
+        237, 211, 245, 92, 26, 99, 18, 88, 214, 156, 247, 162, 222, 249, 222,
+        20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16,
+    ];
+    // bytes < ℓ, most-significant byte first; the first differing byte decides.
+    let mut lt = false;
+    let mut decided = false;
+    let mut i = 32;
+    while i > 0 {
+        let j = i - 1;
+        if !decided {
+            if bytes[j] < L_BYTES[j] {
+                lt = true;
+                decided = true;
+            } else if bytes[j] > L_BYTES[j] {
+                decided = true;
+            }
+        }
+        i -= 1;
+    }
+    if lt {
+        Ok(Scalar::from_bytes_mod_order(bytes))
+    } else {
+        Err(InternalError::ScalarFormat.into())
     }
 }
 
