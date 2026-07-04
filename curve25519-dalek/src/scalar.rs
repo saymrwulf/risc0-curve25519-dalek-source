@@ -940,7 +940,20 @@ impl Scalar {
         let mut naf = [0i8; 256];
 
         let mut x_u64 = [0u64; 5];
-        read_le_u64_into(&self.bytes, &mut x_u64[0..4]);
+        // AENEAS-COMPAT: index-based little-endian load instead of
+        // read_le_u64_into (its chunks/zip iterators are opaque to the
+        // extraction). Pure refactor, semantics identical.
+        let mut k: usize = 0;
+        while k < 4 {
+            let mut t: u64 = 0;
+            let mut bi: usize = 0;
+            while bi < 8 {
+                t |= (self.bytes[8 * k + bi] as u64) << (8 * bi);
+                bi += 1;
+            }
+            x_u64[k] = t;
+            k += 1;
+        }
 
         let width = 1 << w;
         let window_mask = width - 1;
