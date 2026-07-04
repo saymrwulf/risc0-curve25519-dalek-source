@@ -716,32 +716,34 @@ pub(crate) fn sha512_finalize_bytes(h: Sha512) -> [u8; 64] {
 #[allow(non_snake_case)]
 pub(crate) fn recompute_r_sha512(
     key: &VerifyingKey,
-    signature: &InternalSignature,
+    sig: &InternalSignature,
     message: &[u8],
 ) -> CompressedEdwardsY {
     let mut h = sha512_new();
-    sha512_update(&mut h, signature.R.as_bytes());
+    sha512_update(&mut h, sig.R.as_bytes());
     sha512_update(&mut h, key.compressed.as_bytes());
     sha512_update(&mut h, message);
     let k = Scalar::from_bytes_mod_order_wide(&sha512_finalize_bytes(h));
 
     let minus_A: EdwardsPoint = -key.point;
-    EdwardsPoint::vartime_double_scalar_mul_basepoint(&k, &minus_A, &signature.s).compress()
+    EdwardsPoint::vartime_double_scalar_mul_basepoint(&k, &minus_A, &sig.s).compress()
 }
 
 #[allow(non_snake_case)]
 pub(crate) fn verify_sha512(
     key: &VerifyingKey,
     message: &[u8],
-    signature: &ed25519::Signature,
+    sig: &ed25519::Signature,
 ) -> Result<(), SignatureError> {
-    let signature = InternalSignature::try_from(signature)?;
-    let expected_R = recompute_r_sha512(key, &signature, message);
+    // (parameter named `sig`, not `signature`: the extractor's generated
+    // code would otherwise shadow the `signature::` crate namespace)
+    let sig = InternalSignature::try_from(sig)?;
+    let expected_R = recompute_r_sha512(key, &sig, message);
     // AENEAS-COMPAT: explicit byte comparison (the derived PartialEq routes
     // through machinery the extractor cannot interpret). Semantics identical
     // to `expected_R == signature.R`.
     let e = expected_R.as_bytes();
-    let r = signature.R.as_bytes();
+    let r = sig.R.as_bytes();
     let mut equal = true;
     let mut i = 0;
     while i < 32 {
