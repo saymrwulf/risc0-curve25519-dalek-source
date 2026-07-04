@@ -62,6 +62,14 @@ impl Debug for InternalSignature {
     }
 }
 
+
+/// AENEAS-COMPAT (formal verification): opaque constructor — building the
+/// (extraction-opaque) `CompressedEdwardsY` aggregate directly cannot be
+/// interpreted by the extractor. Semantics: the tuple constructor.
+pub(crate) fn compressed_from_bytes(bytes: [u8; 32]) -> CompressedEdwardsY {
+    CompressedEdwardsY(bytes)
+}
+
 /// Ensures that the scalar `s` of a signature is within the bounds [0, 2^253).
 ///
 /// **Unsafe**: This version of `check_scalar` permits signature malleability. See README.
@@ -150,13 +158,20 @@ impl InternalSignature {
     #[allow(non_snake_case)]
     pub fn from_bytes(bytes: &[u8; SIGNATURE_LENGTH]) -> Result<InternalSignature, SignatureError> {
         // TODO: Use bytes.split_array_ref once it’s in MSRV.
+        // AENEAS-COMPAT (formal verification): plain index loops instead of
+        // range-slicing + copy_from_slice — the SliceIndex const-generics
+        // machinery defeats the extractor. Semantics identical.
         let mut R_bytes: [u8; 32] = [0u8; 32];
         let mut s_bytes: [u8; 32] = [0u8; 32];
-        R_bytes.copy_from_slice(&bytes[00..32]);
-        s_bytes.copy_from_slice(&bytes[32..64]);
+        let mut i = 0;
+        while i < 32 {
+            R_bytes[i] = bytes[i];
+            s_bytes[i] = bytes[i + 32];
+            i += 1;
+        }
 
         Ok(InternalSignature {
-            R: CompressedEdwardsY(R_bytes),
+            R: compressed_from_bytes(R_bytes),
             s: check_scalar(s_bytes)?,
         })
     }

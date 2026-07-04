@@ -682,3 +682,77 @@ impl<'d> Deserialize<'d> for VerifyingKey {
         deserializer.deserialize_bytes(VerifyingKeyVisitor)
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AENEAS-COMPAT (formal verification): monomorphic SHA-512 verification path.
+//
+// `raw_verify::<CtxDigest>`'s generic `Digest<OutputSize = U64>` bound drags
+// the typenum/hybrid-array type-level machinery through the extractor, which
+// cannot translate it (mixed type/function recursion groups). The functions
+// below are the EXACT unrolling of `raw_verify::<Sha512>` with
+// `prehash_ctx = None` and a single message slice — the path the `Verifier`
+// impl takes — with the digest fixed to the concrete `Sha512` type and every
+// digest-trait call isolated behind a monomorphic wrapper (extracted opaque,
+// so no generic signature ever reaches the translator):
+//   sha512_new/sha512_update/sha512_finalize_bytes  =  Digest::new/update/
+//     finalize∘into  at  D = Sha512
+//   Scalar::from_hash(h)  =  Scalar::from_bytes_mod_order_wide(&finalize(h))
+//     (from_hash's definition, unrolled)
+// Semantics identical; pure refactor for extraction only.
+// ─────────────────────────────────────────────────────────────────────────────
+
+pub(crate) fn sha512_new() -> Sha512 {
+    Digest::new()
+}
+
+pub(crate) fn sha512_update(h: &mut Sha512, m: &[u8]) {
+    Digest::update(h, m)
+}
+
+pub(crate) fn sha512_finalize_bytes(h: Sha512) -> [u8; 64] {
+    Digest::finalize(h).into()
+}
+
+#[allow(non_snake_case)]
+pub(crate) fn recompute_r_sha512(
+    key: &VerifyingKey,
+    signature: &InternalSignature,
+    message: &[u8],
+) -> CompressedEdwardsY {
+    let mut h = sha512_new();
+    sha512_update(&mut h, signature.R.as_bytes());
+    sha512_update(&mut h, key.compressed.as_bytes());
+    sha512_update(&mut h, message);
+    let k = Scalar::from_bytes_mod_order_wide(&sha512_finalize_bytes(h));
+
+    let minus_A: EdwardsPoint = -key.point;
+    EdwardsPoint::vartime_double_scalar_mul_basepoint(&k, &minus_A, &signature.s).compress()
+}
+
+#[allow(non_snake_case)]
+pub(crate) fn verify_sha512(
+    key: &VerifyingKey,
+    message: &[u8],
+    signature: &ed25519::Signature,
+) -> Result<(), SignatureError> {
+    let signature = InternalSignature::try_from(signature)?;
+    let expected_R = recompute_r_sha512(key, &signature, message);
+    // AENEAS-COMPAT: explicit byte comparison (the derived PartialEq routes
+    // through machinery the extractor cannot interpret). Semantics identical
+    // to `expected_R == signature.R`.
+    let e = expected_R.as_bytes();
+    let r = signature.R.as_bytes();
+    let mut equal = true;
+    let mut i = 0;
+    while i < 32 {
+        if e[i] != r[i] {
+            equal = false;
+        }
+        i += 1;
+    }
+    if equal {
+        Ok(())
+    } else {
+        Err(InternalError::Verify.into())
+    }
+}
