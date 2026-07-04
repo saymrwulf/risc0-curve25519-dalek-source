@@ -85,35 +85,58 @@ impl Scalar52 {
 
     /// Reduce a 64 byte / 512 bit scalar mod l
     #[rustfmt::skip] // keep alignment of lo[*] and hi[*] calculations
-    pub fn from_bytes_wide(bytes: &[u8; 64]) -> Scalar52 {
+    /// AENEAS-COMPAT: the bit-splitting prefix of `from_bytes_wide`,
+    /// extracted as its own function (pure refactor, semantics identical).
+    /// A verification-side split keeps Montgomery calls out of the
+    /// prefix walk's proof obligations.
+    /// AENEAS-COMPAT: lo-half of the 52-bit split (pure refactor; struct
+    /// literal instead of field mutation keeps higher-order IndexMut
+    /// closures out of the extraction).
+    fn split_words_lo(words: &[u64; 8]) -> Scalar52 {
+        let mask = (1u64 << 52) - 1;
+        Scalar52([
+              words[0]                             & mask,
+            ((words[0] >> 52) | (words[1] << 12)) & mask,
+            ((words[1] >> 40) | (words[2] << 24)) & mask,
+            ((words[2] >> 28) | (words[3] << 36)) & mask,
+            ((words[3] >> 16) | (words[4] << 48)) & mask,
+        ])
+    }
+
+    /// AENEAS-COMPAT: hi-half of the 52-bit split (pure refactor, as above).
+    fn split_words_hi(words: &[u64; 8]) -> Scalar52 {
+        let mask = (1u64 << 52) - 1;
+        Scalar52([
+             (words[4] >>  4)                      & mask,
+            ((words[4] >> 56) | (words[5] <<  8)) & mask,
+            ((words[5] >> 44) | (words[6] << 20)) & mask,
+            ((words[6] >> 32) | (words[7] << 32)) & mask,
+             (words[7] >> 20)                      & mask,
+        ])
+    }
+
+    /// AENEAS-COMPAT: the bit-splitting prefix of `from_bytes_wide`,
+    /// extracted as its own function (pure refactor, semantics identical).
+    /// A verification-side split keeps Montgomery calls out of the
+    /// prefix walk's proof obligations.
+
+    /// AENEAS-COMPAT: the bit-splitting prefix of `from_bytes_wide`,
+    /// factored into named halves (pure refactor, semantics identical);
+    /// keeps each verification walk at the proven-cheap ~25-step scale.
+    fn from_bytes_wide_parts(bytes: &[u8; 64]) -> (Scalar52, Scalar52) {
         let mut words = [0u64; 8];
         for i in 0..8 {
             for j in 0..8 {
                 words[i] |= (bytes[(i * 8) + j] as u64) << (j * 8);
             }
         }
+        (Scalar52::split_words_lo(&words), Scalar52::split_words_hi(&words))
+    }
 
-        let mask = (1u64 << 52) - 1;
-        let mut lo = Scalar52::ZERO;
-        let mut hi = Scalar52::ZERO;
-
-        lo[0] =   words[0]                             & mask;
-        lo[1] = ((words[0] >> 52) | (words[ 1] << 12)) & mask;
-        lo[2] = ((words[1] >> 40) | (words[ 2] << 24)) & mask;
-        lo[3] = ((words[2] >> 28) | (words[ 3] << 36)) & mask;
-        lo[4] = ((words[3] >> 16) | (words[ 4] << 48)) & mask;
-        hi[0] =  (words[4] >>  4)                      & mask;
-        hi[1] = ((words[4] >> 56) | (words[ 5] <<  8)) & mask;
-        hi[2] = ((words[5] >> 44) | (words[ 6] << 20)) & mask;
-        hi[3] = ((words[6] >> 32) | (words[ 7] << 32)) & mask;
-        // AENEAS-COMPAT: a bare `x >> c` as the full RHS extracts ill-typed
-        // at the pinned Aeneas (wrapping_shr with an unsubstituted i32 cast);
-        // masking is a semantic no-op here (words[7] >> 20 < 2^44 < 2^52).
-        hi[4] =  (words[7] >> 20)                      & mask;
-
-        lo = Scalar52::montgomery_mul(&lo, &constants::R);  // (lo * R) / R = lo
-        hi = Scalar52::montgomery_mul(&hi, &constants::RR); // (hi * R^2) / R = hi * R
-
+    pub fn from_bytes_wide(bytes: &[u8; 64]) -> Scalar52 {
+        let (lo, hi) = Scalar52::from_bytes_wide_parts(bytes);
+        let lo = Scalar52::montgomery_mul(&lo, &constants::R);  // (lo * R) / R = lo
+        let hi = Scalar52::montgomery_mul(&hi, &constants::RR); // (hi * R^2) / R = hi * R
         Scalar52::add(&hi, &lo)
     }
 
