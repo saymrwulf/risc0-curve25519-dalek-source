@@ -116,7 +116,6 @@ use {
 use rand_core::RngCore;
 
 use subtle::Choice;
-use subtle::ConditionallyNegatable;
 use subtle::ConditionallySelectable;
 use subtle::ConstantTimeEq;
 
@@ -229,7 +228,13 @@ mod decompress {
          // FieldElement::sqrt_ratio_i always returns the nonnegative square root,
          // so we negate according to the supplied sign bit.
         let compressed_sign_bit = Choice::from(repr.as_bytes()[31] >> 7);
-        X.conditional_negate(compressed_sign_bit);
+        // AENEAS-COMPAT: negate-then-conditional-assign instead of
+        // `X.conditional_negate(...)` — semantically identical and still
+        // constant-time, but avoids subtle's `ConditionallyNegatable`
+        // blanket impl which breaks the verification toolchain (the same
+        // documented rewrite as in `FieldElement::sqrt_ratio_i`).
+        let X_neg = -&X;
+        X.conditional_assign(&X_neg, compressed_sign_bit);
 
         EdwardsPoint {
             X,
